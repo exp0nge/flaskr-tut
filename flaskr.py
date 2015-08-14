@@ -36,32 +36,43 @@ def teardown_request(exception):
         
 @app.route('/')
 def show_entries():
-    cur = g.db.execute('select title, text from entries order by id desc')
-    entries = [dict(title=row[0], text=row[1]) for row in cur.fetchall()]
-    return render_template('show_entries.html', entries=entries)
+    if session.get('logged_in'):
+        cur = g.db.execute('select text from entries where username="{0}" order by id desc'.format(session.get('username')))
+        entries = [dict(text=entry[0]) for entry in cur.fetchall()]
+        return render_template('show_entries.html', entries=entries, username=session.get('username'))
+    else:
+        return render_template('show_entries_public.html')
     
-@app.route('/add', methods=['POST'])
+@app.route('/api/add', methods=['POST'])
 def add_entry():
     if not session.get('logged_in'):
         abort(401)
-    g.db.execute('insert into entries (title, text) values (?, ?)',
-                 [request.form['title'], request.form['text']])
+    g.db.execute('insert into entries (username, text) values (?, ?)', 
+                    [session.get('username'), request.form['text']])
     g.db.commit()
     flash('New entry was successfully posted')
-    return redirect(url_for('show_entries'))
+    return redirect('/')
     
     
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/api/login', methods=['GET', 'POST'])
 def login():
     error = None
     if request.method == 'POST':
-        if request.form['username'] != app.config['USERNAME']:
-            error = 'Invalid username'
-        elif request.form['password'] != app.config['PASSWORD']:
-            error = 'Invalid password'
-        else:
+        cur = g.db.execute('SELECT EXISTS(SELECT 1 FROM users WHERE username="{0}" LIMIT 1)'.format(request.form['username']))
+        if cur.fetchall()[0][0] == 1:
+            cur = g.db.execute('select text from entries where username="{0}" order by id desc'.format(request.form['username']))
+            entries = [dict(text=entry[0]) for entry in cur.fetchall()]
+            session['entries'] = entries
             session['logged_in'] = True
-            flash('You were logged in')
+            session['username'] = request.form['username']
+            flash('Log successfully')
+            return redirect(url_for('show_entries'))
+        else:
+            g.db.execute('insert into users (username) values (?)', [request.form['username']])
+            g.db.commit()
+            session['logged_in'] = True
+            session['username'] = request.form['username']
+            flash('new {0} user created!'.format(session['username']))
             return redirect(url_for('show_entries'))
     return render_template('login.html', error=error)
 
